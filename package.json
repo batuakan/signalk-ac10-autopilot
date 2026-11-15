@@ -43,5 +43,13 @@
   "signalk": {
     "appIcon": "./appIcon-72x72.png",
     "displayName": "AC10 Autopilot"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/batuakan/signalk-ac10-autopilot.git"
+  },
+  "homepage": "https://github.com/batuakan/signalk-ac10-autopilot#readme",
+  "bugs": {
+    "url": "https://github.com/batuakan/signalk-ac10-autopilot/issues"
   }
 }
