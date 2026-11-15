@@ -1,0 +1,297 @@
+# Bench firmware: an ESP32 that emulates a Simrad AC10 autopilot, for testing the
+# plugin and the Signal K setup without the boat.
+#
+# This runs the real firmware logic (ac10-logic.yaml: PUT handling, key timing,
+# safety guards). Instead of the TB7 remote port it is wired to a simulated AC10:
+#   - The STBY-AUTO key toggles STANDBY <-> AUTO. On engage the set course is the
+#     current heading, as on the real AC10. The Lamp follows the mode.
+#   - In AUTO each Port/Stbd press moves the set course 1°. The boat turns
+#     towards it at about 3°/s, with a rudder angle proportional to the error.
+#   - In STANDBY a Port/Stbd press would move the rudder (NFU). That is counted in
+#     sim_nfu_violations, which must stay at 0.
+#   - Like the AC10's NMEA output it publishes HSC (set course), HDG (heading) and
+#     RSA (rudder) to Signal K, so absolute targets, tack and route mode work too.
+#
+# Bench indicators (optional): LEDs + 1 kΩ on GPIO25 (Port), GPIO26 (Stbd) and
+# GPIO27 (STBY-AUTO) show the key pulses. The on-board LED (GPIO2) is the Lamp.
+# The BOOT button (GPIO0) is the STBY key on the "control head": it drops the
+# pilot to STANDBY from outside, as a crew member would.
+#
+# The web UI (http://ac10-bench.local) shows the simulated set course, heading,
+# rudder and NFU count. "sim_heading" sets the heading in STANDBY (hand steering),
+# "sim_head_standby"/"sim_head_auto" are the control head's keys.
+#
+# Uses the same secrets.yaml and the same Signal K paths as ac10-remote.yaml, so
+# the plugin needs no change. Don't run it at the same time as the real
+# interface: both would publish steering.autopilot.ac10.*.
+#
+#   esphome run esphome/ac10-bench.yaml
+
+substitutions:
+  name: ac10-bench
+  friendly_name: AC10 Bench Simulator
+  sk_prefix: steering.autopilot.ac10
+  # Same timing as the real interface, so the plugin sees realistic delays
+  press_ms: 120ms
+  gap_ms: 180ms
+  mode_ms: 300ms
+  max_steps: "180"
+  # Simulated boat
+  turn_rate: "3.0"       # °/s towards the set course in AUTO
+  rudder_gain: "1.5"     # rudder ° per ° of heading error
+  rudder_max: "30.0"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+external_components:
+  # PUT handling: feat/put-handlers branch of ESPHomeSignalK, checked out next
+  # to this repository (see ac10-remote.yaml).
+  - source:
+      type: local
+      path: ../../ESPHomeSignalK/components
+    components: [signalk]
+
+logger:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: ${name}-fallback
+    password: !secret fallback_password
+
+captive_portal:
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+web_server:
+  port: 80
+  version: 3
+  auth:
+    type: digest
+    username: !secret web_username
+    password: !secret web_password
+
+signalk:
+  id: sk
+  host: !secret signalk_host
+  username: !secret signalk_username
+  password: !secret signalk_password
+
+packages:
+  logic: !include ac10-logic.yaml
+
+# ---------------------------------------------------------------------------
+# Simulated AC10
+
+globals:
+  - id: sim_engaged
+    type: bool
+    initial_value: "false"
+  - id: sim_course        # set course, whole degrees 0..359
+    type: int
+    initial_value: "90"
+  - id: sim_heading       # degrees 0..360
+    type: float
+    initial_value: "90.0"
+  - id: sim_rudder        # degrees, + = starboard
+    type: float
+    initial_value: "0.0"
+  - id: sim_nfu
+    type: int
+    initial_value: "0"
+
+output:
+  # Bench LEDs
+  - platform: gpio
+    id: led_port
+    pin: GPIO25
+  - platform: gpio
+    id: led_stbd
+    pin: GPIO26
+  - platform: gpio
+    id: led_mode
+    pin: GPIO27
+  - platform: gpio
+    id: led_lamp
+    pin: GPIO2
+
+  # The three key outputs the logic drives, wired to the simulated AC10
+  - platform: template
+    id: out_mode
+    type: binary
+    write_action:
+      - lambda: |-
+          if (state) id(led_mode).turn_on(); else id(led_mode).turn_off();
+          if (!state) return;
+          id(sim_engaged) = !id(sim_engaged);
+          if (id(sim_engaged)) {
+            id(sim_course) = ((int) lroundf(id(sim_heading))) % 360;
+            id(sim_rudder) = 0;
+          } else {
+            id(sim_rudder) = 0;
+          }
+          ESP_LOGI("sim", "STBY-AUTO key -> %s (set course %d)",
+                   id(sim_engaged) ? "AUTO" : "STANDBY", id(sim_course));
+  - platform: template
+    id: out_port
+    type: binary
+    write_action:
+      - lambda: |-
+          if (state) id(led_port).turn_on(); else id(led_port).turn_off();
+          if (!state) return;
+          if (id(sim_engaged)) {
+            id(sim_course) = (id(sim_course) + 359) % 360;
+            ESP_LOGD("sim", "Port: set course %d", id(sim_course));
+          } else {
+            id(sim_nfu)++;
+            ESP_LOGE("sim", "Port key in STANDBY: rudder moved (NFU violation #%d)", id(sim_nfu));
+          }
+  - platform: template
+    id: out_stbd
+    type: binary
+    write_action:
+      - lambda: |-
+          if (state) id(led_stbd).turn_on(); else id(led_stbd).turn_off();
+          if (!state) return;
+          if (id(sim_engaged)) {
+            id(sim_course) = (id(sim_course) + 1) % 360;
+            ESP_LOGD("sim", "Stbd: set course %d", id(sim_course));
+          } else {
+            id(sim_nfu)++;
+            ESP_LOGE("sim", "Stbd key in STANDBY: rudder moved (NFU violation #%d)", id(sim_nfu));
+          }
+
+binary_sensor:
+  # The Lamp, as the logic sees it
+  - platform: template
+    id: lamp_raw
+    internal: true
+    lambda: "return id(sim_engaged);"
+    on_press:
+      - output.turn_on: led_lamp
+    on_release:
+      - output.turn_off: led_lamp
+
+  # BOOT button = STBY key on the control head
+  - platform: gpio
+    id: head_stby_key
+    internal: true
+    pin:
+      number: GPIO0
+      mode: INPUT_PULLUP
+      inverted: true
+    filters:
+      - delayed_on: 50ms
+    on_press:
+      - button.press: sim_head_standby
+
+button:
+  - platform: template
+    id: sim_head_standby
+    name: sim_head_standby
+    on_press:
+      - lambda: |-
+          if (id(sim_engaged)) ESP_LOGI("sim", "Control head: STANDBY");
+          id(sim_engaged) = false;
+          id(sim_rudder) = 0;
+  - platform: template
+    id: sim_head_auto
+    name: sim_head_auto
+    on_press:
+      - lambda: |-
+          if (id(sim_engaged)) return;
+          id(sim_engaged) = true;
+          id(sim_course) = ((int) lroundf(id(sim_heading))) % 360;
+          ESP_LOGI("sim", "Control head: AUTO (set course %d)", id(sim_course));
+  - platform: template
+    name: sim_reset_nfu
+    entity_category: diagnostic
+    on_press:
+      - lambda: "id(sim_nfu) = 0;"
+
+number:
+  # Hand steering in STANDBY: set the heading
+  - platform: template
+    name: sim_heading
+    min_value: 0
+    max_value: 359
+    step: 1
+    unit_of_measurement: "°"
+    lambda: "return id(sim_heading);"
+    set_action:
+      - lambda: |-
+          if (id(sim_engaged)) {
+            ESP_LOGW("sim", "Heading can only be set in STANDBY (the pilot is steering)");
+            return;
+          }
+          id(sim_heading) = x;
+
+sensor:
+  - platform: template
+    name: sim_set_course
+    unit_of_measurement: "°"
+    accuracy_decimals: 0
+    update_interval: 1s
+    lambda: "return id(sim_course);"
+  - platform: template
+    name: sim_heading_now
+    unit_of_measurement: "°"
+    accuracy_decimals: 1
+    update_interval: 1s
+    lambda: "return id(sim_heading);"
+  - platform: template
+    name: sim_rudder
+    unit_of_measurement: "°"
+    accuracy_decimals: 1
+    update_interval: 1s
+    lambda: "return id(sim_rudder);"
+  - platform: template
+    name: sim_nfu_violations
+    accuracy_decimals: 0
+    update_interval: 1s
+    lambda: "return id(sim_nfu);"
+
+interval:
+  # Boat dynamics: in AUTO, turn towards the set course
+  - interval: 100ms
+    then:
+      - lambda: |-
+          if (!id(sim_engaged)) return;
+          float err = id(sim_course) - id(sim_heading);
+          while (err > 180) err -= 360;
+          while (err < -180) err += 360;
+          float r = err * ${rudder_gain};
+          id(sim_rudder) = std::max(-${rudder_max}f, std::min(${rudder_max}f, r));
+          float step = ${turn_rate} * 0.1f;
+          float d = std::max(-step, std::min(step, err));
+          float h = id(sim_heading) + d;
+          if (h < 0) h += 360;
+          if (h >= 360) h -= 360;
+          id(sim_heading) = h;
+
+  # The AC10's NMEA 0183 output, as the server would parse it: HSC, HDG, RSA
+  - interval: 1s
+    then:
+      - signalk.publish_delta:
+          path: steering.autopilot.target.headingMagnetic
+          value: !lambda "return id(sim_course) * M_PI / 180.0;"
+      - signalk.publish_delta:
+          path: navigation.headingMagnetic
+          value: !lambda "return id(sim_heading) * M_PI / 180.0;"
+      - signalk.publish_delta:
+          path: steering.rudderAngle
+          value: !lambda "return id(sim_rudder) * M_PI / 180.0;"

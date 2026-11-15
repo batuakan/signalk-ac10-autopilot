@@ -34,6 +34,7 @@ plugin-steered: the AC10 stays in AUTO and the plugin steps the set course along
 | `src/esphome.ts` | `EspHomeRemote`: ESPHome `web_server` client. Sends REST POSTs (`/button/<id>/press`, `/number/ap_steps/set?value=n`) and reads the SSE `/events` stream for `ap_engaged` and `ap_pending_steps`. Supports Basic and Digest auth, reconnects with backoff, drops a stale stream after 30 s. |
 | `src/angles.ts` | Angle helpers and `routeHeading()`. |
 | `esphome/ac10-remote.yaml` | Firmware, hardware part: ESP32, Wi-Fi, web_server, `signalk:` connection, GPIO outputs and Lamp input. Includes `ac10-logic.yaml` as a package. Uses ESPHomeSignalK from a local path `../../ESPHomeSignalK/components` (branch `feat/put-handlers`, not merged yet). |
+| `esphome/ac10-bench.yaml` | Bench firmware: ESP32 running the real logic against a simulated AC10 (mode toggles Lamp, 1°/press set course, heading/rudder dynamics, HSC/HDG/RSA published, NFU counter, BOOT = control-head STBY). Same paths/secrets as ac10-remote. |
 | `esphome/ac10-logic.yaml` | Firmware, hardware-independent part: `on_put` handlers, heartbeat, key scripts, all timing and safety interlocks. |
 | `test/e2e/` | `run.sh`: throwaway signalk-server (port 3300, temp config dir) + this plugin + `ac10-sim.yaml` (host build of the logic with a simulated AC10). Run `ESPHOME=<venv>/bin/esphome bash test/e2e/run.sh`. |
 | `docs/HARDWARE.md` | Remote-port investigation (from Simrad AP25 manual 20221495), measurement checklist, block diagram, parts and values, safety design. |
