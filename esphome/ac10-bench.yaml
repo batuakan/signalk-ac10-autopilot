@@ -51,11 +51,10 @@ esp32:
     type: esp-idf
 
 external_components:
-  # PUT handling: feat/put-handlers branch of ESPHomeSignalK, checked out next
-  # to this repository (see ac10-remote.yaml).
-  - source:
-      type: local
-      path: ../../ESPHomeSignalK/components
+  # ESPHomeSignalK with PUT handling (v1 PUTs forwarded by the server). To work
+  # on the component itself, use a local checkout instead:
+  #   - source: { type: local, path: ../../ESPHomeSignalK/components }
+  - source: github://batuakan/ESPHomeSignalK@main
     components: [signalk]
 
 logger:

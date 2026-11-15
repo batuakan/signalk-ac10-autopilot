@@ -33,7 +33,7 @@ plugin-steered: the AC10 stays in AUTO and the plugin steps the set course along
 | `src/signalk-remote.ts` | `SignalKRemote` (default transport): subscribes to `<prefix>.engaged`/`.steps` on the self bus, goes offline after 6 s without heartbeat, sends PUTs via `putSelfPath` (PENDING ignored, 2xx resolves, else rejects with the device message, 5 s timeout). |
 | `src/esphome.ts` | `EspHomeRemote`: ESPHome `web_server` client. Sends REST POSTs (`/button/<id>/press`, `/number/ap_steps/set?value=n`) and reads the SSE `/events` stream for `ap_engaged` and `ap_pending_steps`. Supports Basic and Digest auth, reconnects with backoff, drops a stale stream after 30 s. |
 | `src/angles.ts` | Angle helpers and `routeHeading()`. |
-| `esphome/ac10-remote.yaml` | Firmware, hardware part: ESP32, Wi-Fi, web_server, `signalk:` connection, GPIO outputs and Lamp input. Includes `ac10-logic.yaml` as a package. Uses ESPHomeSignalK from a local path `../../ESPHomeSignalK/components` (branch `feat/put-handlers`, not merged yet). |
+| `esphome/ac10-remote.yaml` | Firmware, hardware part: ESP32, Wi-Fi, web_server, `signalk:` connection, GPIO outputs and Lamp input. Includes `ac10-logic.yaml` as a package. Uses ESPHomeSignalK from `github://batuakan/ESPHomeSignalK@main` (PUT support merged in its PR #18); the YAML has a commented local-path line for working on the component. |
 | `esphome/ac10-bench.yaml` | Bench firmware: ESP32 running the real logic against a simulated AC10 (mode toggles Lamp, 1°/press set course, heading/rudder dynamics, HSC/HDG/RSA published, NFU counter, BOOT = control-head STBY). Same paths/secrets as ac10-remote. |
 | `esphome/ac10-logic.yaml` | Firmware, hardware-independent part: `on_put` handlers, heartbeat, key scripts, all timing and safety interlocks. |
 | `test/e2e/` | `run.sh`: throwaway signalk-server (port 3300, temp config dir) + this plugin + `ac10-sim.yaml` (host build of the logic with a simulated AC10). Run `ESPHOME=<venv>/bin/esphome bash test/e2e/run.sh`. |
@@ -48,7 +48,7 @@ plugin-steered: the AC10 stays in AUTO and the plugin steps the set course along
 npm install
 npm run build   # tsc -> dist/, then GUI bundle -> public/
 npm test        # mocha, 44 tests
-ESPHOME=<venv>/bin/esphome bash test/e2e/run.sh   # end to end, needs ../ESPHomeSignalK
+ESPHOME=<venv>/bin/esphome bash test/e2e/run.sh   # end to end
 ```
 
 Validate or compile the firmware (ESPHome is not installed globally; use a venv and a dummy `secrets.yaml`):
@@ -97,8 +97,6 @@ Done:
 
 Not done / unverified:
 - **Never run against a real AC10.** Only unit tests and the simulated end-to-end test.
-- ESPHomeSignalK PUT support is on its local `feat/put-handlers` branch (not pushed/merged). Once merged, switch
-  `external_components` in `ac10-remote.yaml` and `test/e2e/ac10-sim.yaml` to `github://batuakan/ESPHomeSignalK@main`.
 - Hardware unknowns the manual does not state (see `docs/HARDWARE.md` §2):
   - how the STBY-AUTO key is signalled (assumed: Port+Stbd to Gnd together; alternative: Lamp→Gnd);
   - Port/Stbd voltage and current;
@@ -107,6 +105,6 @@ Not done / unverified:
   - `press_ms`/`gap_ms` that give exactly 1° per press.
   When measurements arrive, update the YAML substitutions and the docs. Don't re-research.
 - Optional NMEA 0183 TCP bridge on the ESP (`stream_server`) is only a commented-out block in the YAML.
-- No lint/prettier config. Not published to npm. Not pushed.
+- No lint/prettier config. Not published to npm. GitHub: batuakan/signalk-ac10-autopilot (private).
 - Untested idea: if the control head has SimNet, check whether it accepts Simnet PGN 130850 commands over a SimNet→N2K
   cable.

@@ -66,9 +66,8 @@ the automatic modes apart.
 
 1. **Hardware.** Build the interface ([`docs/HARDWARE.md`](docs/HARDWARE.md)),
    do the measurements in §2 first, and flash
-   [`esphome/ac10-remote.yaml`](esphome/ac10-remote.yaml). PUT handling needs
-   the `feat/put-handlers` branch of ESPHomeSignalK, checked out next to this
-   repository (`../ESPHomeSignalK`) until it is merged. Fill in
+   [`esphome/ac10-remote.yaml`](esphome/ac10-remote.yaml). ESPHome fetches
+   ESPHomeSignalK from GitHub. Fill in
    `esphome/secrets.yaml` (`signalk_host` empty = find the server with mDNS;
    `signalk_username` empty = send an access request, approve it in the admin UI
    under Security → Access Requests). Use the ESPHome web
@@ -125,8 +124,8 @@ npm test        # mocha: pilot logic, Signal K PUT transport, ESPHome SSE/REST c
 
 End-to-end test: a throwaway Signal K server on port 3300 with this plugin, and
 the firmware logic built for the host with a simulated AC10
-([`test/e2e/ac10-sim.yaml`](test/e2e/ac10-sim.yaml)). It needs ESPHome and the
-ESPHomeSignalK checkout:
+([`test/e2e/ac10-sim.yaml`](test/e2e/ac10-sim.yaml)). It needs ESPHome,
+signalk-server on the PATH, ixwebsocket for the host build, curl and jq:
 
 ```sh
 ESPHOME=/path/to/venv/bin/esphome bash test/e2e/run.sh

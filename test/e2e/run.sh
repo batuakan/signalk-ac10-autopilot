@@ -4,7 +4,7 @@
 # simulated AC10 (test/e2e/ac10-sim.yaml).
 #
 # Needs: npm run build done, signalk-server on PATH, esphome (ESPHOME=/path/to/esphome), ixwebsocket for
-# the host build, the ESPHomeSignalK checkout with PUT support next to this repository, curl, jq.
+# the host build (ESPHomeSignalK is fetched from GitHub), curl, jq.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ESPHOME="${ESPHOME:-esphome}"

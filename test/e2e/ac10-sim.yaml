@@ -24,9 +24,10 @@ esphome:
 host:
 
 external_components:
-  - source:
-      type: local
-      path: ../../../ESPHomeSignalK/components
+  # ESPHomeSignalK with PUT handling (v1 PUTs forwarded by the server). To work
+  # on the component itself, use a local checkout instead:
+  #   - source: { type: local, path: ../../../ESPHomeSignalK/components }
+  - source: github://batuakan/ESPHomeSignalK@main
     components: [signalk]
 
 logger:
