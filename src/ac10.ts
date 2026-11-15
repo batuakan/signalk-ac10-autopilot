@@ -115,6 +115,9 @@ export interface PilotConfig {
   }
 }
 
+/** How often the known state is republished (signalk-autopilot clients time out after 3 s) */
+export const REFRESH_INTERVAL_MS = 1000
+
 export const DEFAULT_CONFIG: PilotConfig = {
   engagedMode: 'auto',
   confirmTimeout: 5,
@@ -160,6 +163,7 @@ export class AC10Pilot extends EventEmitter<{ update: [PilotStatus] }> {
   private hscTime = 0
   private lastCommandTime = 0
   private routeTimer?: NodeJS.Timeout
+  private refreshTimer?: NodeJS.Timeout
   private routeMissingSince = 0
   private routeBusy = false
   private unsubscribes: (() => void)[] = []
@@ -217,12 +221,20 @@ export class AC10Pilot extends EventEmitter<{ update: [PilotStatus] }> {
         this.cfg.route.interval * 1000
       )
     }
+    // Clients such as the signalk-autopilot webapp show "No pilot" when the state has not been
+    // updated for 3 s (real pilots stream it), so repeat it while it is known. While the state is
+    // unknown it is not repeated, and those clients time out to "No pilot", which is right.
+    this.refreshTimer = setInterval(() => {
+      const st = this.status
+      if (st.state !== null) this.sendDelta(st)
+    }, REFRESH_INTERVAL_MS)
     this.notifyRemote(this.remote.connected)
     this.publish(true)
   }
 
   stop() {
     clearInterval(this.routeTimer)
+    clearInterval(this.refreshTimer)
     this.unsubscribes.forEach((f) => f())
     this.unsubscribes = []
   }
@@ -520,6 +532,11 @@ export class AC10Pilot extends EventEmitter<{ update: [PilotStatus] }> {
     const key = JSON.stringify(s)
     if (!force && key === this.lastPublished) return
     this.lastPublished = key
+    this.sendDelta(s)
+    this.emit('update', s)
+  }
+
+  private sendDelta(s: PilotStatus) {
     const values: { path: string; value: unknown }[] = [
       { path: P.state, value: s.state },
       { path: P.engaged, value: s.engaged }
@@ -531,7 +548,6 @@ export class AC10Pilot extends EventEmitter<{ update: [PilotStatus] }> {
       values.push({ path: P.targetHeading, value: s.engaged ? s.target : null })
     }
     this.app.handleMessage(this.sourceId, { updates: [{ values }] })
-    this.emit('update', s)
   }
 
   private notifyRemote(ok: boolean) {

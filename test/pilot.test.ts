@@ -31,6 +31,22 @@ describe('AC10Pilot', () => {
       expect(toDeg(ctx.pilot.status.target!)).to.equal(130)
     })
 
+    it('repeats the known state every second, so clients do not time out to "No pilot"', async function () {
+      this.timeout(4000)
+      ctx = makePilot()
+      ctx.remote.setEngaged(true)
+      const count = () => ctx.app.deltas.filter((d) => d.path === 'steering.autopilot.state').length
+      const before = count()
+      await new Promise((r) => setTimeout(r, 2100))
+      expect(count() - before).to.equal(2)
+      expect(ctx.app.last('steering.autopilot.state')).to.equal('auto')
+      // unknown state is not repeated: clients should time out
+      ctx.remote.setEngaged(undefined)
+      const atUnknown = count()
+      await new Promise((r) => setTimeout(r, 1100))
+      expect(count()).to.equal(atUnknown)
+    })
+
     it('does not press the toggle when already in the requested state', async () => {
       ctx = makePilot()
       await ctx.pilot.setState('standby')
