@@ -39,6 +39,14 @@ signalk:
   username: "admin"
   password: "e2e-secret"
   source: "esphome.ac10-sim"
+  # Test hook: the STBY key on the AC10 control head (crew takes over)
+  on_put:
+    - path: test.ac10sim.headStandby
+      type: boolean
+      then:
+        - lambda: |-
+            if (id(sim_engaged)) ESP_LOGI("sim", "Control head: STANDBY");
+            id(sim_engaged) = false;
 
 packages:
   logic: !include ../../esphome/ac10-logic.yaml
@@ -97,6 +105,10 @@ interval:
       - signalk.publish_delta:
           path: navigation.headingMagnetic
           value: !lambda "return id(sim_course) * M_PI / 180.0;"
+      - signalk.publish_delta:
+          path: test.ac10sim.headStandby
+          type: boolean
+          value: !lambda "return !id(sim_engaged);"
       - signalk.publish_delta:
           path: test.ac10sim.nfuViolations
           value: !lambda "return (float) id(sim_nfu);"

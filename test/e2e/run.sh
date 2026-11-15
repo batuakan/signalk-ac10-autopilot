@@ -109,6 +109,18 @@ check "state is auto again" 'wait_for steering.autopilot.state "\"auto\"" 5'
 check "no rudder movement in standby (NFU violations $(value test.ac10sim.nfuViolations))" \
   '[[ "$(value test.ac10sim.nfuViolations)" == 0 ]]'
 
+r=$(put steering.autopilot.actions.adjustHeading 30)
+check "adjustHeading +30 -> 200 ($r)" '[[ "$r" == 200* ]]'
+sleep 0.5
+r=$(put test.ac10sim.headStandby true)
+check "STANDBY on the control head during the course change -> 200 ($r)" '[[ "$r" == 200* ]]'
+check "state is standby" 'wait_for steering.autopilot.state "\"standby\"" 5'
+sleep 2
+
+# A press already under way when the AC10 drops to STANDBY is unavoidable: allow one
+check "steps stop when STANDBY is pressed on the head (NFU violations $(value test.ac10sim.nfuViolations), max 1)" \
+  '(( $(value test.ac10sim.nfuViolations) <= 1 ))'
+
 kill $DEV
 check "device gone: state unknown" 'wait_for steering.autopilot.state null 12'
 check "remoteOffline alarm" \

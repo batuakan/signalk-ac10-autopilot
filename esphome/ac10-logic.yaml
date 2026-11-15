@@ -7,11 +7,20 @@
 #   binary_sensor  lamp_raw                       (the TB7 Lamp input, true = lit)
 #   signalk:       id: sk, plus host / username / password
 #   substitutions  sk_prefix, press_ms, gap_ms, mode_ms, max_steps
+#                  (lamp_cut_ms is optional, default below)
 #
 #   ${sk_prefix}.engaged  published: Lamp state, on change and every 2 s (heartbeat)
 #                         PUT true = engage, false = standby
 #   ${sk_prefix}.steps    published: course steps still queued
 #                         PUT n = queue n 1° steps (+ starboard, - port)
+
+substitutions:
+  # How fast a Lamp that goes out stops course steps. Port/Stbd in STANDBY moves
+  # the rudder, so this must be short; it only rides through contact noise or a
+  # pulsed lamp drive. (The 1500 ms filter on "lamp" is for reporting only.)
+  # A key press already under way when the AC10 drops to STANDBY can't be undone,
+  # so at most one partial press can reach the AC10 in STANDBY.
+  lamp_cut_ms: 20ms
 
 signalk:
   # Publish both paths: the server forwards PUTs only to the client publishing them.
@@ -47,7 +56,7 @@ signalk:
       then:
         - if:
             condition:
-              binary_sensor.is_off: lamp
+              lambda: "return !id(lamp).state || !id(lamp_live).state;"
             then:
               - signalk.put_reply:
                   request_id: !lambda "return request_id;"
@@ -91,6 +100,20 @@ binary_sensor:
       - delayed_off: 1500ms
     on_state:
       - script.execute: publish_engaged
+    on_release:
+      - script.execute: cancel_steps
+
+  # The same Lamp with a short off filter: the NFU guard for course steps. The
+  # slow "lamp" above would let steps run on for 1.5 s after STANDBY was
+  # pressed on the control head, and each of those would move the rudder.
+  # A blinking (alarm) lamp therefore also cancels queued steps.
+  - platform: template
+    id: lamp_live
+    internal: true
+    lambda: "return id(lamp_raw).state;"
+    filters:
+      - delayed_on: 100ms
+      - delayed_off: ${lamp_cut_ms}
     on_release:
       - script.execute: cancel_steps
 
@@ -186,7 +209,7 @@ script:
       n: int
     then:
       - lambda: |-
-          if (!id(lamp).state) {
+          if (!id(lamp).state || !id(lamp_live).state) {
             ESP_LOGW("ac10", "steps refused: autopilot not engaged (NFU guard)");
             return;
           }
@@ -235,7 +258,7 @@ script:
           timeout: 3s
       - while:
           condition:
-            lambda: "return id(pending) != 0 && id(lamp).state && !id(mode_key).is_running();"
+            lambda: "return id(pending) != 0 && id(lamp_live).state && id(lamp).state && !id(mode_key).is_running();"
           then:
             - if:
                 condition:

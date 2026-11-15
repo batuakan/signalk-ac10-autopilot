@@ -64,6 +64,9 @@ esphome compile esphome/ac10-remote.yaml
   an API that leaves an output on.
 - **NFU guard.** Port/Stbd in STANDBY moves the rudder. Both the firmware (`lamp` check in the steps PUT, in
   `queue_steps` and in the step loop) and the plugin (`requireEngaged`) refuse steps unless engaged.
+  The step guard uses `lamp_live` (20 ms off filter), never only the reporting `lamp` (1500 ms off filter): with the
+  slow one, steps ran on for 1.5 s after STANDBY on the control head (found on the bench, 5 presses in STANDBY).
+  One press already under way when the AC10 drops to STANDBY is unavoidable.
 - **Lamp is the source of truth** for engaged/standby. Every state change waits for Lamp confirmation
   (`confirmTimeout`). If the ESPHome link is down, the state is `null` and commands are refused.
 - **`ap_engage`, `ap_standby` and the `engaged` PUT are idempotent** (they check the Lamp before toggling).
