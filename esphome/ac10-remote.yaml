@@ -1,0 +1,148 @@
+# ESPHome firmware: Simrad AC10 REMOTE port (TB7) interface for signalk-ac10-autopilot
+#
+# Emulates an R3000X remote control:
+#   - Port / Stbd keys  -> PhotoMOS closing TB7 "Port" or "Stbd" to TB7 "Gnd"
+#   - STBY-AUTO key     -> PhotoMOS closing BOTH Port and Stbd to Gnd   (see
+#                          docs/HARDWARE.md §2: verify on your unit)
+#   - Lamp              -> AC-input optocoupler, reported as "engaged"
+#
+# Talks to the plugin through the Signal K server with ESPHomeSignalK
+# (github.com/batuakan/ESPHomeSignalK, PUT handling):
+#   ${sk_prefix}.engaged  published: Lamp state, on change and every 2 s (heartbeat)
+#                         PUT true = engage, false = standby
+#   ${sk_prefix}.steps    published: course steps still queued
+#                         PUT n = queue n 1° steps (+ starboard, - port)
+# A refused PUT gets a 4xx reply with the reason; the plugin shows it.
+#
+# Safety rules enforced here, not in Signal K:
+#   - Every output is a firmware-timed pulse; nothing stays on if the network drops.
+#   - Course steps are only sent while the Lamp says an automatic mode is
+#     active. Port/Stbd in STANDBY would move the rudder (NFU), so it is refused.
+#   - Losing the Lamp (STANDBY pressed anywhere) cancels queued steps.
+#   - Port, Stbd and mode outputs are never on at the same time.
+#
+# The ESPHome web UI (web_server) stays for diagnostics and for tuning the key
+# timing; its entities also serve the plugin's "http" transport:
+#   POST /button/ap_engage/press   POST /button/ap_standby/press
+#   POST /number/ap_steps/set?value=-10      GET /events (SSE)
+
+substitutions:
+  name: ac10-remote
+  friendly_name: AC10 Remote
+  sk_prefix: steering.autopilot.ac10
+  # GPIOs (ESP32 DevKit; avoid strapping pins 0/2/5/12/15)
+  pin_port: GPIO25
+  pin_stbd: GPIO26
+  pin_mode: GPIO27
+  pin_lamp: GPIO32
+  pin_led: GPIO2
+  # R3000X key timing. Tune on the boat: the AC10 must see every press.
+  press_ms: 120ms     # key held per 1° step
+  gap_ms: 180ms       # key released between steps (=> ~3.3°/s)
+  mode_ms: 300ms      # STBY-AUTO key hold
+  max_steps: "180"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    priority: 800
+    then:
+      - output.turn_off: out_port
+      - output.turn_off: out_stbd
+      - output.turn_off: out_mode
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+external_components:
+  # PUT handling is on the feat/put-handlers branch of ESPHomeSignalK until it is
+  # merged; this expects that checkout next to this repository. Once merged:
+  #   - source: github://batuakan/ESPHomeSignalK@main
+  - source:
+      type: local
+      path: ../../ESPHomeSignalK/components
+    components: [signalk]
+
+logger:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: ${name}-fallback
+    password: !secret fallback_password
+
+captive_portal:
+
+# Native API is optional (Home Assistant / ESPHome dashboard).
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+web_server:
+  port: 80
+  version: 3
+  auth:
+    type: digest
+    username: !secret web_username
+    password: !secret web_password
+
+signalk:
+  id: sk
+  # Empty host: find the server with mDNS. Empty username: ask for access
+  # (approve it in the Signal K admin UI, Security -> Access Requests).
+  host: !secret signalk_host
+  username: !secret signalk_username
+  password: !secret signalk_password
+
+packages:
+  logic: !include ac10-logic.yaml
+
+output:
+  - platform: gpio
+    id: out_port
+    pin: ${pin_port}
+  - platform: gpio
+    id: out_stbd
+    pin: ${pin_stbd}
+  - platform: gpio
+    id: out_mode
+    pin: ${pin_mode}
+
+status_led:
+  pin: ${pin_led}   # DevKit on-board LED (strapping pin warning is harmless here)
+
+binary_sensor:
+  # TB7 "Lamp" through the optocoupler: pulls the pin low when the lamp output is energised.
+  - platform: gpio
+    id: lamp_raw
+    internal: true
+    pin:
+      number: ${pin_lamp}
+      mode: INPUT_PULLUP
+      inverted: true
+
+# ---------------------------------------------------------------------------
+# Optional: NMEA 0183 bridge to the AC10's NMEA port (4800 baud) over TCP, so
+# one box on the AC10 replaces a USB/RS-422 adapter on the Signal K host.
+# Needs an RS-422 transceiver (isolated recommended, see docs/HARDWARE.md).
+# In Signal K add a "NMEA 0183 / TCP client" connection to <host>:10110 with
+# an output event (e.g. "nmea0183out") for signalk-to-nmea0183.
+#
+# external_components:
+#   - source: github://oxan/esphome-stream-server
+# uart:
+#   id: nmea_uart
+#   tx_pin: GPIO17
+#   rx_pin: GPIO16
+#   baud_rate: 4800
+# stream_server:
+#   uart_id: nmea_uart
+#   port: 10110

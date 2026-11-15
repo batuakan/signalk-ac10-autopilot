@@ -1,0 +1,47 @@
+{
+  "name": "signalk-ac10-autopilot",
+  "version": "0.1.0",
+  "description": "Signal K autopilot plugin for the Simrad AC10 autopilot computer, using its R3000X remote port (via an ESPHome device) and NMEA 0183",
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "public",
+    "esphome",
+    "docs"
+  ],
+  "scripts": {
+    "build": "tsc -b --pretty false && node scripts/build-gui.mjs",
+    "watch": "tsc --watch --pretty false",
+    "test": "mocha",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "keywords": [
+    "signalk-node-server-plugin",
+    "signalk-webapp",
+    "signalk-category-nmea-0183",
+    "autopilot",
+    "simrad",
+    "ac10",
+    "esphome"
+  ],
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@signalk/server-api": "^2.37.0",
+    "@tsconfig/node20": "^20.1.6",
+    "@types/chai": "^5.2.2",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^20.19.0",
+    "chai": "^5.2.1",
+    "mocha": "^11.7.1",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  },
+  "signalk": {
+    "appIcon": "./appIcon-72x72.png",
+    "displayName": "AC10 Autopilot"
+  }
+}

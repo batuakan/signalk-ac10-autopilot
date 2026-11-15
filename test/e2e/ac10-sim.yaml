@@ -1,0 +1,102 @@
+# Host build for test/e2e/run.sh: the real firmware logic (esphome/ac10-logic.yaml)
+# wired to a simulated AC10 instead of GPIOs.
+#
+# The simulated AC10 behaves like the R3000X description in the Simrad manual:
+#   - the STBY-AUTO key toggles STANDBY <-> AUTO (the Lamp follows)
+#   - in AUTO each Port/Stbd press moves the set course 1°
+#   - in STANDBY a Port/Stbd press would move the rudder: counted as an NFU
+#     violation, which the firmware must never cause
+# It publishes the set course as the AC10's HSC would (and a heading that
+# follows it), so the plugin's target tracking is exercised too.
+
+substitutions:
+  name: ac10-sim
+  sk_prefix: steering.autopilot.ac10
+  # Faster than on the boat, to keep the test short
+  press_ms: 40ms
+  gap_ms: 40ms
+  mode_ms: 150ms
+  max_steps: "180"
+
+esphome:
+  name: ${name}
+
+host:
+
+external_components:
+  - source:
+      type: local
+      path: ../../../ESPHomeSignalK/components
+    components: [signalk]
+
+logger:
+  level: INFO
+
+signalk:
+  id: sk
+  host: "127.0.0.1"
+  port: 3300
+  username: "admin"
+  password: "e2e-secret"
+  source: "esphome.ac10-sim"
+
+packages:
+  logic: !include ../../esphome/ac10-logic.yaml
+
+globals:
+  - id: sim_engaged
+    type: bool
+    initial_value: "false"
+  - id: sim_course
+    type: int
+    initial_value: "90"
+  - id: sim_nfu
+    type: int
+    initial_value: "0"
+
+output:
+  - platform: template
+    id: out_mode
+    type: binary
+    write_action:
+      - lambda: |-
+          if (state) {
+            id(sim_engaged) = !id(sim_engaged);
+            ESP_LOGI("sim", "STBY-AUTO -> %s", id(sim_engaged) ? "AUTO" : "STANDBY");
+          }
+  - platform: template
+    id: out_port
+    type: binary
+    write_action:
+      - lambda: |-
+          if (!state) return;
+          if (id(sim_engaged)) id(sim_course) = (id(sim_course) + 359) % 360;
+          else { id(sim_nfu)++; ESP_LOGE("sim", "Port key in STANDBY: rudder moved (NFU)"); }
+  - platform: template
+    id: out_stbd
+    type: binary
+    write_action:
+      - lambda: |-
+          if (!state) return;
+          if (id(sim_engaged)) id(sim_course) = (id(sim_course) + 1) % 360;
+          else { id(sim_nfu)++; ESP_LOGE("sim", "Stbd key in STANDBY: rudder moved (NFU)"); }
+
+binary_sensor:
+  - platform: template
+    id: lamp_raw
+    internal: true
+    lambda: "return id(sim_engaged);"
+
+interval:
+  # The AC10's NMEA output: HSC (set course) and HDG (heading)
+  - interval: 500ms
+    then:
+      - signalk.publish_delta:
+          path: steering.autopilot.target.headingMagnetic
+          value: !lambda "return id(sim_course) * M_PI / 180.0;"
+      - signalk.publish_delta:
+          path: navigation.headingMagnetic
+          value: !lambda "return id(sim_course) * M_PI / 180.0;"
+      - signalk.publish_delta:
+          path: test.ac10sim.nfuViolations
+          value: !lambda "return (float) id(sim_nfu);"

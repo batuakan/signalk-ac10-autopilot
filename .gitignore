@@ -1,0 +1,10 @@
+node_modules/
+dist/
+public/signalk-autopilot.min.js
+*.tgz
+esphome/secrets.yaml
+esphome/.esphome/
+test/e2e/.esphome/
+test/e2e/.gitignore
+esphome/.gitignore
+tsconfig.tsbuildinfo

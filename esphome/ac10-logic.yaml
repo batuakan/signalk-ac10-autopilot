@@ -1,0 +1,261 @@
+# AC10 remote-port logic: Signal K PUT handling, the R3000X key sequences and the
+# safety guards. Hardware-independent; included by ac10-remote.yaml (ESP32 GPIOs)
+# and by test/e2e/ac10-sim.yaml (host build with a simulated AC10).
+#
+# The including file provides:
+#   outputs        out_port, out_stbd, out_mode   (the three key switches)
+#   binary_sensor  lamp_raw                       (the TB7 Lamp input, true = lit)
+#   signalk:       id: sk, plus host / username / password
+#   substitutions  sk_prefix, press_ms, gap_ms, mode_ms, max_steps
+#
+#   ${sk_prefix}.engaged  published: Lamp state, on change and every 2 s (heartbeat)
+#                         PUT true = engage, false = standby
+#   ${sk_prefix}.steps    published: course steps still queued
+#                         PUT n = queue n 1° steps (+ starboard, - port)
+
+signalk:
+  # Publish both paths: the server forwards PUTs only to the client publishing them.
+  on_connect:
+    - script.execute: publish_engaged
+    - script.execute: publish_steps
+  on_put:
+    - path: ${sk_prefix}.engaged
+      type: boolean
+      then:
+        - if:
+            condition:
+              script.is_running: mode_key
+            then:
+              - signalk.put_reply:
+                  request_id: !lambda "return request_id;"
+                  status_code: 409
+                  message: "AC10 remote busy: a mode change is in progress"
+            else:
+              - if:
+                  condition:
+                    lambda: "return x != id(lamp).state;"
+                  then:
+                    - if:
+                        condition:
+                          lambda: "return !x;"
+                        then:
+                          - script.execute: cancel_steps
+                    - script.execute: mode_key
+      # otherwise answered 200: the plugin confirms the change from the published Lamp state
+    - path: ${sk_prefix}.steps
+      type: number
+      then:
+        - if:
+            condition:
+              binary_sensor.is_off: lamp
+            then:
+              - signalk.put_reply:
+                  request_id: !lambda "return request_id;"
+                  status_code: 400
+                  message: "Autopilot not engaged: course steps refused (they would move the rudder)"
+            else:
+              - if:
+                  condition:
+                    lambda: "return std::fabs(x) > ${max_steps};"
+                  then:
+                    - signalk.put_reply:
+                        request_id: !lambda "return request_id;"
+                        status_code: 400
+                        message: "More than ${max_steps} steps"
+                  else:
+                    - script.execute:
+                        id: queue_steps
+                        n: !lambda "return (int) lroundf(x);"
+
+globals:
+  - id: pending
+    type: int
+    initial_value: "0"
+
+interval:
+  # Heartbeat: the plugin counts the device offline after 6 s without it.
+  - interval: 2s
+    then:
+      - script.execute: publish_engaged
+
+binary_sensor:
+  # TB7 "Lamp": lit while the AC10 is in an automatic mode (AUTO/WIND/NAV).
+  # lamp_raw is the input itself, defined by the hardware (or simulator) file.
+  - platform: template
+    id: lamp
+    name: ap_engaged
+    lambda: "return id(lamp_raw).state;"
+    filters:
+      - delayed_on: 100ms
+      # Rides through a blinking lamp (alarm) without reporting STANDBY
+      - delayed_off: 1500ms
+    on_state:
+      - script.execute: publish_engaged
+    on_release:
+      - script.execute: cancel_steps
+
+sensor:
+  - platform: template
+    id: pending_sensor
+    name: ap_pending_steps
+    accuracy_decimals: 0
+    update_interval: never
+    on_value:
+      - script.execute: publish_steps
+
+number:
+  # Queue course steps from the web UI / http transport: + = starboard, - = port.
+  - platform: template
+    name: ap_steps
+    id: steps_number
+    min_value: -${max_steps}
+    max_value: ${max_steps}
+    step: 1
+    optimistic: false
+    lambda: "return 0;"
+    set_action:
+      - script.execute:
+          id: queue_steps
+          n: !lambda "return (int) x;"
+
+button:
+  - platform: template
+    name: ap_engage
+    on_press:
+      - if:
+          condition:
+            binary_sensor.is_off: lamp
+          then:
+            - script.execute: mode_key
+  - platform: template
+    name: ap_standby
+    on_press:
+      - script.execute: cancel_steps
+      - if:
+          condition:
+            binary_sensor.is_on: lamp
+          then:
+            - script.execute: mode_key
+  - platform: template
+    name: ap_cancel_steps
+    on_press:
+      - script.execute: cancel_steps
+  # Raw toggle, for diagnostics only (does not check the Lamp)
+  - platform: template
+    name: ap_mode_toggle
+    entity_category: diagnostic
+    on_press:
+      - script.execute: mode_key
+  - platform: template
+    name: ap_port_1
+    on_press:
+      - number.set: { id: steps_number, value: -1 }
+  - platform: template
+    name: ap_stbd_1
+    on_press:
+      - number.set: { id: steps_number, value: 1 }
+  - platform: template
+    name: ap_port_10
+    on_press:
+      - number.set: { id: steps_number, value: -10 }
+  - platform: template
+    name: ap_stbd_10
+    on_press:
+      - number.set: { id: steps_number, value: 10 }
+
+script:
+  - id: publish_engaged
+    mode: queued
+    then:
+      - signalk.publish_delta:
+          path: ${sk_prefix}.engaged
+          type: boolean
+          value: !lambda "return id(lamp).state;"
+
+  - id: publish_steps
+    mode: queued
+    then:
+      - signalk.publish_delta:
+          path: ${sk_prefix}.steps
+          value: !lambda "return (float) id(pending);"
+
+  # Adds n steps to the queue (NFU guard: refused unless engaged) and runs them.
+  - id: queue_steps
+    mode: queued
+    parameters:
+      n: int
+    then:
+      - lambda: |-
+          if (!id(lamp).state) {
+            ESP_LOGW("ac10", "steps refused: autopilot not engaged (NFU guard)");
+            return;
+          }
+          int total = id(pending) + n;
+          id(pending) = std::max(-${max_steps}, std::min(${max_steps}, total));
+          id(pending_sensor).publish_state(id(pending));
+      - if:
+          condition:
+            not:
+              script.is_running: step_runner
+          then:
+            - script.execute: step_runner
+
+  - id: mode_key
+    mode: single
+    then:
+      - script.stop: step_runner
+      - output.turn_off: out_port
+      - output.turn_off: out_stbd
+      - delay: 50ms
+      - output.turn_on: out_mode
+      - delay: ${mode_ms}
+      - output.turn_off: out_mode
+      # Lockout so a double request cannot toggle straight back
+      - delay: 1s
+
+  - id: cancel_steps
+    mode: restart
+    then:
+      - script.stop: step_runner
+      - output.turn_off: out_port
+      - output.turn_off: out_stbd
+      - lambda: |-
+          id(pending) = 0;
+          id(pending_sensor).publish_state(0);
+
+  - id: step_runner
+    mode: single
+    then:
+      # Steps queued right after engaging arrive during the STBY-AUTO lockout: wait
+      # for it instead of dropping them. (A mode change itself stops this script.)
+      - wait_until:
+          condition:
+            not:
+              script.is_running: mode_key
+          timeout: 3s
+      - while:
+          condition:
+            lambda: "return id(pending) != 0 && id(lamp).state && !id(mode_key).is_running();"
+          then:
+            - if:
+                condition:
+                  lambda: "return id(pending) > 0;"
+                then:
+                  - output.turn_on: out_stbd
+                  - delay: ${press_ms}
+                  - output.turn_off: out_stbd
+                  - lambda: "id(pending)--;"
+                else:
+                  - output.turn_on: out_port
+                  - delay: ${press_ms}
+                  - output.turn_off: out_port
+                  - lambda: "id(pending)++;"
+            - lambda: "id(pending_sensor).publish_state(id(pending));"
+            - delay: ${gap_ms}
+      - output.turn_off: out_port
+      - output.turn_off: out_stbd
+      - lambda: |-
+          if (id(pending) != 0) {
+            id(pending) = 0;
+            id(pending_sensor).publish_state(0);
+          }

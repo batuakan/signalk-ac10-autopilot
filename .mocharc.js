@@ -1,0 +1,6 @@
+module.exports = {
+  require: 'tsx',
+  extension: ['ts'],
+  spec: ['test/**/*.test.ts'],
+  timeout: 10000
+}
