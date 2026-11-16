@@ -224,9 +224,16 @@ export class AC10Pilot extends EventEmitter<{ update: [PilotStatus] }> {
     // Clients such as the signalk-autopilot webapp show "No pilot" when the state has not been
     // updated for 3 s (real pilots stream it), so repeat it while it is known. While the state is
     // unknown it is not repeated, and those clients time out to "No pilot", which is right.
+    // Both sources of steering.autopilot.state are repeated: this plugin's deltas and the V2
+    // Autopilot API's (the 'update' event, sent with $source = device id). With a source
+    // priority group on these paths the server passes only the preferred source, and drops the
+    // others until it has been silent for the fallback time (15 s). If only one of them
+    // repeated, a single update from the other could hide the state for that long.
     this.refreshTimer = setInterval(() => {
       const st = this.status
-      if (st.state !== null) this.sendDelta(st)
+      if (st.state === null) return
+      this.sendDelta(st)
+      this.emit('update', st)
     }, REFRESH_INTERVAL_MS)
     this.notifyRemote(this.remote.connected)
     this.publish(true)

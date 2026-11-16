@@ -36,15 +36,22 @@ describe('AC10Pilot', () => {
       ctx = makePilot()
       ctx.remote.setEngaged(true)
       const count = () => ctx.app.deltas.filter((d) => d.path === 'steering.autopilot.state').length
+      // The V2 API update (sent by the server as the device's source) repeats too: with a
+      // source priority group, a lone update from it would hide the plugin's deltas for 15 s.
+      let apiUpdates = 0
+      ctx.pilot.on('update', () => apiUpdates++)
       const before = count()
       await new Promise((r) => setTimeout(r, 2100))
       expect(count() - before).to.equal(2)
+      expect(apiUpdates).to.equal(2)
       expect(ctx.app.last('steering.autopilot.state')).to.equal('auto')
       // unknown state is not repeated: clients should time out
       ctx.remote.setEngaged(undefined)
       const atUnknown = count()
+      const apiAtUnknown = apiUpdates
       await new Promise((r) => setTimeout(r, 1100))
       expect(count()).to.equal(atUnknown)
+      expect(apiUpdates).to.equal(apiAtUnknown)
     })
 
     it('does not press the toggle when already in the requested state', async () => {
