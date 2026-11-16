@@ -69,11 +69,21 @@ logger:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  # The ESP32 default (light) lets the radio sleep between beacons. Packets are then
+  # delayed and lost, the Signal K TCP connection stalls, and the plugin sees the
+  # heartbeat stop (remoteOffline). This device is mains powered: keep the radio awake.
+  power_save_mode: none
   ap:
     ssid: ${name}-fallback
     password: !secret fallback_password
 
 captive_portal:
+
+# Wi-Fi diagnostics in the web UI / Home Assistant
+sensor:
+  - platform: wifi_signal
+    name: wifi_signal
+    update_interval: 30s
 
 # Native API is optional (Home Assistant / ESPHome dashboard).
 api:
